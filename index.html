@@ -1,0 +1,734 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hypnotic Book Title Generator | Authority Fusion</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: '#2DB84D'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .animate-spin {
+      animation: spin 1s linear infinite;
+    }
+    textarea {
+      resize: vertical;
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-gray-50 to-green-50 min-h-screen">
+  <div id="app"></div>
+
+  <script>
+    // ============================================
+    // CONFIGURATION
+    // ============================================
+    const CONFIG = {
+      API_URL: 'https://title-generator-seven.vercel.app/api/generate',
+      WEBHOOK_URL: 'https://services.leadconnectorhq.com/hooks/jX8Chq7HLJXhK9PqSdgo/webhook-trigger/0489409a-0bff-4003-b326-f0e8ca02d7d0',
+      DEBUG_MODE: true
+    };
+
+    // ============================================
+    // LOGGING
+    // ============================================
+    function log(message, data = null) {
+      if (CONFIG.DEBUG_MODE) {
+        console.log('[TitleGen] ' + message, data || '');
+      }
+    }
+
+    // ============================================
+    // STATE
+    // ============================================
+    const initialFormData = {
+      firstName: '',
+      lastName: '',
+      email: '',
+      company: '',
+      idealReader: '',
+      readerProblem: '',
+      transformation: '',
+      methodology: '',
+      enemy: '',
+      surprisingTruth: '',
+      brandPersonality: 'professional',
+      existingPhrases: ''
+    };
+
+    let state = {
+      currentStep: 0,
+      isLoading: false,
+      error: null,
+      results: null,
+      allResults: [],
+      nsfwMode: false,
+      showNsfwWarning: false,
+      formData: { ...initialFormData },
+      generationCount: 0
+    };
+
+    const BRAND_OPTIONS = [
+      { value: 'provocative', label: 'Provocative & Bold' },
+      { value: 'professional', label: 'Professional & Polished' },
+      { value: 'warm', label: 'Warm & Approachable' },
+      { value: 'authoritative', label: 'Authoritative & Expert' },
+      { value: 'playful', label: 'Playful & Creative' }
+    ];
+
+    const STEPS = [
+      {
+        id: 'audience',
+        title: 'About Your Audience',
+        subtitle: 'Who will read your book?',
+        validate: function(fd) { return fd.idealReader.trim() && fd.readerProblem.trim() && fd.transformation.trim(); }
+      },
+      {
+        id: 'expertise',
+        title: 'About Your Expertise',
+        subtitle: 'What makes your approach unique?',
+        validate: function(fd) { return fd.enemy.trim(); }
+      },
+      {
+        id: 'brand',
+        title: 'About Your Brand',
+        subtitle: 'How do you want to show up?',
+        validate: function(fd) { return fd.brandPersonality; }
+      },
+      {
+        id: 'contact',
+        title: 'Almost There!',
+        subtitle: 'Where should we send your titles?',
+        validate: function(fd) { return fd.firstName.trim() && fd.lastName.trim() && fd.email.trim() && fd.email.includes('@'); }
+      }
+    ];
+
+    function updateField(fieldId, value) {
+      state.formData[fieldId] = value;
+      log('Field updated: ' + fieldId, value);
+      updateButtonStates();
+    }
+
+    function getFieldValue(fieldId) {
+      return state.formData[fieldId] || '';
+    }
+
+    function isCurrentStepValid() {
+      var step = STEPS[state.currentStep];
+      return step.validate(state.formData);
+    }
+
+    function updateButtonStates() {
+      var nextBtn = document.getElementById('btn-next');
+      var generateBtn = document.getElementById('btn-generate');
+      var isValid = isCurrentStepValid();
+
+      if (nextBtn) {
+        nextBtn.disabled = !isValid;
+        if (isValid) {
+          nextBtn.className = 'flex items-center gap-2 py-3 px-6 rounded-lg font-semibold transition-colors bg-brand text-white hover:bg-green-600';
+        } else {
+          nextBtn.className = 'flex items-center gap-2 py-3 px-6 rounded-lg font-semibold transition-colors bg-gray-200 text-gray-400 cursor-not-allowed';
+        }
+      }
+
+      if (generateBtn) {
+        var canGenerate = isValid && !state.isLoading;
+        generateBtn.disabled = !canGenerate;
+        if (canGenerate) {
+          generateBtn.className = 'flex items-center gap-2 py-3 px-6 rounded-lg font-semibold transition-colors bg-brand text-white hover:bg-green-600';
+        } else {
+          generateBtn.className = 'flex items-center gap-2 py-3 px-6 rounded-lg font-semibold transition-colors bg-gray-200 text-gray-400 cursor-not-allowed';
+        }
+      }
+    }
+
+    function goToStep(stepIndex) {
+      if (stepIndex >= 0 && stepIndex < STEPS.length) {
+        state.currentStep = stepIndex;
+        state.error = null;
+        log('Navigated to step ' + stepIndex, STEPS[stepIndex].id);
+        render();
+      }
+    }
+
+    function goNext() {
+      if (isCurrentStepValid() && state.currentStep < STEPS.length - 1) {
+        goToStep(state.currentStep + 1);
+      }
+    }
+
+    function goBack() {
+      if (state.currentStep > 0) {
+        goToStep(state.currentStep - 1);
+      }
+    }
+
+    function sendToWebhook(data) {
+      if (CONFIG.WEBHOOK_URL === 'YOUR_GHL_WEBHOOK_URL') {
+        log('Webhook not configured, skipping', data);
+        return;
+      }
+
+      fetch(CONFIG.WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      }).then(function() {
+        log('Webhook sent successfully');
+      }).catch(function(error) {
+        log('Webhook error', error);
+      });
+    }
+
+    function generateTitles(isRegenerate) {
+      log('generateTitles called', { isRegenerate: isRegenerate, formData: state.formData });
+
+      if (CONFIG.API_URL === 'YOUR_VERCEL_URL_HERE') {
+        state.error = 'API URL not configured. Please update CONFIG.API_URL.';
+        render();
+        return;
+      }
+
+      state.isLoading = true;
+      state.error = null;
+      state.generationCount++;
+      render();
+
+      log('Calling API', CONFIG.API_URL);
+
+      fetch(CONFIG.API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          formData: state.formData,
+          nsfwMode: state.nsfwMode,
+          generationCount: state.generationCount,
+          isRegenerate: isRegenerate
+        })
+      })
+      .then(function(response) {
+        log('API response status', response.status);
+        return response.json().then(function(data) {
+          return { ok: response.ok, data: data };
+        });
+      })
+      .then(function(result) {
+        log('API response data', result.data);
+
+        if (!result.ok) {
+          throw new Error(result.data.error || 'API returned error ' + result.status);
+        }
+
+        if (!result.data.success || !result.data.titles) {
+          throw new Error('Invalid response from API');
+        }
+
+        state.results = result.data.titles;
+        state.allResults.push({
+          generationNumber: state.generationCount,
+          titles: result.data.titles,
+          timestamp: new Date().toLocaleString()
+        });
+        state.isLoading = false;
+        state.error = null;
+
+        log('Titles generated successfully', result.data.titles);
+
+        sendToWebhook({
+          firstName: state.formData.firstName,
+          lastName: state.formData.lastName,
+          email: state.formData.email,
+          company: state.formData.company,
+          idealReader: state.formData.idealReader,
+          readerProblem: state.formData.readerProblem,
+          transformation: state.formData.transformation,
+          methodology: state.formData.methodology,
+          enemy: state.formData.enemy,
+          surprisingTruth: state.formData.surprisingTruth,
+          brandPersonality: state.formData.brandPersonality,
+          existingPhrases: state.formData.existingPhrases,
+          generatedBenefit: result.data.titles.benefit.title + (result.data.titles.benefit.subtitle ? ' - ' + result.data.titles.benefit.subtitle : ''),
+          generatedCuriosity: result.data.titles.curiosity.title + (result.data.titles.curiosity.subtitle ? ' - ' + result.data.titles.curiosity.subtitle : ''),
+          generatedDouble: result.data.titles.doubleEntendre.title + (result.data.titles.doubleEntendre.subtitle ? ' - ' + result.data.titles.doubleEntendre.subtitle : '')
+        });
+
+        render();
+      })
+      .catch(function(error) {
+        log('Error generating titles', error);
+        state.isLoading = false;
+        state.error = 'Generation failed: ' + error.message + '. Please try again.';
+        render();
+      });
+    }
+
+    function downloadResults() {
+      if (state.allResults.length === 0) return;
+
+      var fd = state.formData;
+      var authorName = fd.firstName + ' ' + fd.lastName;
+
+      var content = '\nHYPNOTIC BOOK TITLE GENERATOR RESULTS\n=====================================\nGenerated for: ' + authorName + ' | ' + (fd.company || 'N/A') + '\nEmail: ' + fd.email + '\n\n';
+
+      for (var i = 0; i < state.allResults.length; i++) {
+        var gen = state.allResults[i];
+        var r = gen.titles;
+        
+        content += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+        content += 'GENERATION #' + gen.generationNumber + ' (' + gen.timestamp + ')\n';
+        content += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+        
+        content += '🎯 BENEFIT/HOW-TO TITLE\n\n';
+        content += '"' + r.benefit.title + '"\n';
+        content += (r.benefit.subtitle ? '"' + r.benefit.subtitle + '"\n' : '');
+        content += 'by ' + authorName + '\n\n';
+        content += 'Why It Works:\n' + r.benefit.reasoning + '\n\n';
+        
+        content += '🔮 CURIOSITY TITLE\n\n';
+        content += '"' + r.curiosity.title + '"\n';
+        content += (r.curiosity.subtitle ? '"' + r.curiosity.subtitle + '"\n' : '');
+        content += 'by ' + authorName + '\n\n';
+        content += 'Why It Works:\n' + r.curiosity.reasoning + '\n\n';
+        
+        content += '⚡ DOUBLE ENTENDRE TITLE\n\n';
+        content += '"' + r.doubleEntendre.title + '"\n';
+        content += (r.doubleEntendre.subtitle ? '"' + r.doubleEntendre.subtitle + '"\n' : '');
+        content += 'by ' + authorName + '\n\n';
+        content += 'Why It Works:\n' + r.doubleEntendre.reasoning + '\n\n';
+      }
+
+      content += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+      content += 'YOUR BOOK STRATEGY SNAPSHOT\n';
+      content += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+      content += 'Target Reader: ' + fd.idealReader + '\n';
+      content += 'Core Problem: ' + fd.readerProblem + '\n';
+      content += 'Transformation: ' + fd.transformation + '\n';
+      content += 'Unique Angle: ' + (fd.methodology || fd.enemy) + '\n\n';
+
+      content += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+      content += 'READY TO TURN YOUR TITLE INTO A BOOK?\n';
+      content += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+      content += 'Which Large Organizations Would Buy Your Book in Bulk?\n\n';
+      content += 'We\'ll introduce you to 3+ distribution partners who could\n';
+      content += 'generate $250K-$500K in additional revenue over the next 18 months.\n\n';
+      content += '→ Schedule Your Call: https://dougcrowe.link/call\n\n';
+      content += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+      content += 'CONTACT US\n';
+      content += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+      content += 'Authority Fusion\n';
+      content += 'Website: https://authoryourbrand.com\n';
+      content += 'Email: info@authoryourbrand.com\n\n';
+      content += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n';
+      content += 'Generated by Authority Fusion | AuthorYourBrand.com\n';
+      content += 'Total Generations: ' + state.allResults.length + '\n';
+
+      var blob = new Blob([content], { type: 'text/plain' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'Book_Titles_' + fd.firstName.replace(/\s+/g, '_') + '_' + Date.now() + '.txt';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      log('Results downloaded');
+    }
+
+    function showNsfwWarning() {
+      state.showNsfwWarning = true;
+      render();
+    }
+
+    function hideNsfwWarning() {
+      state.showNsfwWarning = false;
+      render();
+    }
+
+    function enableNsfw() {
+      state.nsfwMode = true;
+      state.showNsfwWarning = false;
+      log('NSFW mode enabled');
+      if (state.results) {
+        generateTitles(true);
+      } else {
+        render();
+      }
+    }
+
+    function disableNsfw() {
+      state.nsfwMode = false;
+      log('NSFW mode disabled');
+      if (state.results) {
+        generateTitles(true);
+      } else {
+        render();
+      }
+    }
+
+    function toggleNsfw() {
+      if (state.nsfwMode) {
+        disableNsfw();
+      } else {
+        showNsfwWarning();
+      }
+    }
+
+    function renderFormView() {
+      var step = STEPS[state.currentStep];
+      var isLastStep = state.currentStep === STEPS.length - 1;
+      var isValid = isCurrentStepValid();
+
+      var fieldsHtml = '';
+
+      if (step.id === 'audience') {
+        fieldsHtml = '<div class="space-y-4">' +
+          '<div>' +
+            '<label class="block text-sm font-medium text-gray-700 mb-1">Who is your ideal reader? * <span class="text-gray-500 font-normal">(Role, industry, stage)</span></label>' +
+            '<textarea data-field="idealReader" rows="2" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none" placeholder="e.g., B2B SaaS founders doing $2-10M ARR who are stuck at a growth plateau">' + getFieldValue('idealReader') + '</textarea>' +
+          '</div>' +
+          '<div>' +
+            '<label class="block text-sm font-medium text-gray-700 mb-1">What\'s the #1 problem keeping them up at night? *</label>' +
+            '<textarea data-field="readerProblem" rows="2" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none" placeholder="e.g., They can\'t scale beyond founder-led sales and are burning out">' + getFieldValue('readerProblem') + '</textarea>' +
+          '</div>' +
+          '<div>' +
+            '<label class="block text-sm font-medium text-gray-700 mb-1">What transformation do you help them achieve? * <span class="text-gray-500 font-normal">(Before → After)</span></label>' +
+            '<textarea data-field="transformation" rows="2" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none" placeholder="e.g., From doing everything themselves → Building a self-sustaining sales engine">' + getFieldValue('transformation') + '</textarea>' +
+          '</div>' +
+        '</div>';
+      } else if (step.id === 'expertise') {
+        fieldsHtml = '<div class="space-y-4">' +
+          '<div>' +
+            '<label class="block text-sm font-medium text-gray-700 mb-1">What\'s your unique methodology or framework? <span class="text-gray-500 font-normal">(Name it if you have one)</span></label>' +
+            '<textarea data-field="methodology" rows="2" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none" placeholder="e.g., The Revenue Flywheel Method - a 5-step system for predictable growth">' + getFieldValue('methodology') + '</textarea>' +
+          '</div>' +
+          '<div>' +
+            '<label class="block text-sm font-medium text-gray-700 mb-1">What\'s the "enemy" or conventional wisdom you fight against? *</label>' +
+            '<textarea data-field="enemy" rows="2" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none" placeholder="e.g., The myth that you need to hire expensive sales reps to scale">' + getFieldValue('enemy') + '</textarea>' +
+          '</div>' +
+          '<div>' +
+            '<label class="block text-sm font-medium text-gray-700 mb-1">What\'s a surprising or counterintuitive truth you teach?</label>' +
+            '<textarea data-field="surprisingTruth" rows="2" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none" placeholder="e.g., The best salespeople are actually terrible at building sales teams">' + getFieldValue('surprisingTruth') + '</textarea>' +
+          '</div>' +
+        '</div>';
+      } else if (step.id === 'brand') {
+        var currentBrand = getFieldValue('brandPersonality');
+        var radioHtml = '';
+        for (var i = 0; i < BRAND_OPTIONS.length; i++) {
+          var opt = BRAND_OPTIONS[i];
+          var isSelected = currentBrand === opt.value;
+          radioHtml += '<div data-radio="brandPersonality" data-value="' + opt.value + '" class="flex items-center p-3 border rounded-lg cursor-pointer transition-all ' + (isSelected ? 'border-green-500 bg-green-50' : 'border-gray-300 hover:border-green-300') + '">' +
+            '<span class="w-4 h-4 rounded-full border-2 mr-3 flex items-center justify-center ' + (isSelected ? 'border-green-500' : 'border-gray-400') + '">' +
+              (isSelected ? '<span class="w-2 h-2 rounded-full bg-green-500"></span>' : '') +
+            '</span>' +
+            '<span class="text-gray-700">' + opt.label + '</span>' +
+          '</div>';
+        }
+        fieldsHtml = '<div class="space-y-4">' +
+          '<div>' +
+            '<label class="block text-sm font-medium text-gray-700 mb-2">What\'s your brand personality? *</label>' +
+            '<div class="space-y-2">' + radioHtml + '</div>' +
+          '</div>' +
+          '<div>' +
+            '<label class="block text-sm font-medium text-gray-700 mb-1">Any words, phrases, or concepts you already use that resonate?</label>' +
+            '<textarea data-field="existingPhrases" rows="2" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none" placeholder="e.g., \'Revenue on autopilot\', \'Founder freedom\', \'10x your pipeline\'">' + getFieldValue('existingPhrases') + '</textarea>' +
+          '</div>' +
+        '</div>';
+      } else if (step.id === 'contact') {
+        fieldsHtml = '<div class="space-y-4">' +
+          '<div>' +
+            '<label class="block text-sm font-medium text-gray-700 mb-1">First Name *</label>' +
+            '<input type="text" data-field="firstName" value="' + getFieldValue('firstName') + '" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none" placeholder="Your first name">' +
+          '</div>' +
+          '<div>' +
+            '<label class="block text-sm font-medium text-gray-700 mb-1">Last Name *</label>' +
+            '<input type="text" data-field="lastName" value="' + getFieldValue('lastName') + '" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none" placeholder="Your last name">' +
+          '</div>' +
+          '<div>' +
+            '<label class="block text-sm font-medium text-gray-700 mb-1">Email *</label>' +
+            '<input type="email" data-field="email" value="' + getFieldValue('email') + '" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none" placeholder="your@email.com">' +
+          '</div>' +
+          '<div>' +
+            '<label class="block text-sm font-medium text-gray-700 mb-1">Company Name</label>' +
+            '<input type="text" data-field="company" value="' + getFieldValue('company') + '" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none" placeholder="Your company">' +
+          '</div>' +
+        '</div>';
+      }
+
+      var progressHtml = '';
+      for (var j = 0; j < STEPS.length; j++) {
+        var stepClass = '';
+        if (j < state.currentStep) stepClass = 'bg-brand text-white';
+        else if (j === state.currentStep) stepClass = 'bg-brand text-white ring-4 ring-green-200';
+        else stepClass = 'bg-gray-200 text-gray-500';
+        progressHtml += '<div class="flex items-center justify-center w-8 h-8 rounded-full text-sm font-semibold transition-colors ' + stepClass + '">' + (j + 1) + '</div>';
+      }
+
+      var errorHtml = state.error ? '<div class="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg"><p class="text-red-700 text-sm">' + state.error + '</p></div>' : '';
+
+      var buttonHtml = '';
+      if (isLastStep) {
+        var btnClass = (isValid && !state.isLoading) ? 'bg-brand text-white hover:bg-green-600' : 'bg-gray-200 text-gray-400 cursor-not-allowed';
+        var btnContent = state.isLoading ? 
+          '<svg class="w-5 h-5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg> Generating...' :
+          '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg> Generate My Titles';
+        buttonHtml = '<button id="btn-generate" class="flex items-center gap-2 py-3 px-6 rounded-lg font-semibold transition-colors ' + btnClass + '">' + btnContent + '</button>';
+      } else {
+        var nextClass = isValid ? 'bg-brand text-white hover:bg-green-600' : 'bg-gray-200 text-gray-400 cursor-not-allowed';
+        buttonHtml = '<button id="btn-next" class="flex items-center gap-2 py-3 px-6 rounded-lg font-semibold transition-colors ' + nextClass + '">Next <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg></button>';
+      }
+
+      var backClass = state.currentStep === 0 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100';
+
+      return '<div class="p-4 md:p-8"><div class="max-w-2xl mx-auto">' +
+        '<div class="text-center mb-8">' +
+          '<div class="inline-flex items-center justify-center w-16 h-16 bg-brand rounded-full mb-4">' +
+            '<svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>' +
+          '</div>' +
+          '<h1 class="text-3xl font-bold text-gray-900 mb-3">Most Book Titles Are Forgettable.<br>Yours Doesn\'t Have to Be.</h1>' +
+          '<p class="text-gray-600 text-lg">In 60 seconds, get 3 titles engineered to stop scrollers, spark curiosity, and sell books—using the same psychology that\'s moved millions of copies.</p>' +
+        '</div>' +
+        '<div class="mb-8">' +
+          '<div class="flex justify-between mb-2">' + progressHtml + '</div>' +
+          '<div class="h-2 bg-gray-200 rounded-full overflow-hidden"><div class="h-full bg-brand rounded-full transition-all duration-500" style="width: ' + (((state.currentStep + 1) / STEPS.length) * 100) + '%"></div></div>' +
+        '</div>' +
+        '<div class="bg-white rounded-xl shadow-lg p-6 md:p-8">' +
+          '<div class="mb-6"><h2 class="text-2xl font-bold text-gray-900">' + step.title + '</h2><p class="text-gray-600">' + step.subtitle + '</p></div>' +
+          fieldsHtml +
+          errorHtml +
+          '<div class="flex justify-between mt-8">' +
+            '<button id="btn-back" class="flex items-center gap-2 py-2 px-4 rounded-lg font-medium transition-colors ' + backClass + '"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg> Back</button>' +
+            buttonHtml +
+          '</div>' +
+        '</div>' +
+        '<p class="text-center text-gray-500 text-sm mt-6">Powered by Authority Fusion | <a href="https://authoryourbrand.com" target="_blank" class="text-brand hover:underline">AuthorYourBrand.com</a></p>' +
+      '</div></div>';
+    }
+
+    function renderResultsView() {
+      var fd = state.formData;
+      var r = state.results;
+      var authorName = fd.firstName + ' ' + fd.lastName;
+
+      var errorHtml = state.error ? '<div class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg"><p class="text-red-700 text-sm">' + state.error + '</p></div>' : '';
+
+      var regenClass = state.isLoading ? 'opacity-50 cursor-not-allowed' : '';
+      var regenIcon = state.isLoading ? 'animate-spin' : '';
+      var regenText = state.isLoading ? 'Regenerating...' : 'Regenerate Titles';
+
+      var generationCountText = state.allResults.length > 1 ? ' <span class="text-sm font-normal text-gray-500">(' + state.allResults.length + ' generations saved)</span>' : '';
+
+      var nsfwModal = '';
+      if (state.showNsfwWarning) {
+        nsfwModal = '<div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">' +
+          '<div class="bg-white rounded-xl p-6 max-w-md">' +
+            '<div class="flex items-center gap-3 mb-4">' +
+              '<svg class="w-8 h-8 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>' +
+              '<h3 class="text-xl font-bold text-gray-900">Content Warning</h3>' +
+            '</div>' +
+            '<p class="text-gray-700 mb-4">Removing the PG-13 filter will generate Double Entendre titles that may include:</p>' +
+            '<ul class="text-sm text-gray-600 mb-6 space-y-1"><li>• Suggestive wordplay</li><li>• Adult double meanings</li><li>• Provocative language</li></ul>' +
+            '<p class="text-sm text-gray-500 mb-6"><strong>Note:</strong> These titles are designed to shock and intrigue. Use at your own discretion.</p>' +
+            '<div class="flex gap-3">' +
+              '<button id="btn-keep-pg13" class="flex-1 py-2 px-4 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors">Keep PG-13</button>' +
+              '<button id="btn-confirm-nsfw" class="flex-1 py-2 px-4 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors">Remove Filter</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      }
+
+      return '<div class="p-4 md:p-8"><div class="max-w-3xl mx-auto">' +
+        '<div class="text-center mb-8">' +
+          '<div class="inline-flex items-center justify-center w-16 h-16 bg-brand rounded-full mb-4">' +
+            '<svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>' +
+          '</div>' +
+          '<h1 class="text-3xl font-bold text-gray-900 mb-2">Your Hypnotic Book Titles' + generationCountText + '</h1>' +
+          '<p class="text-gray-600">Generated for ' + fd.firstName + (fd.company ? ' | ' + fd.company : '') + '</p>' +
+        '</div>' +
+        '<div class="space-y-6 mb-8">' +
+          '<div class="bg-white rounded-xl shadow-lg p-6 border-l-4 border-green-500">' +
+            '<div class="flex items-center gap-2 mb-3"><svg class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><span class="text-sm font-semibold text-green-600 uppercase tracking-wide">Benefit / How-To</span></div>' +
+            '<h2 class="text-2xl font-bold text-gray-900 mb-1">"' + r.benefit.title + '"</h2>' +
+            (r.benefit.subtitle ? '<p class="text-lg text-gray-600 italic mb-2">"' + r.benefit.subtitle + '"</p>' : '<div class="mb-2"></div>') +
+            '<p class="text-base font-bold text-gray-800 mb-4">by ' + authorName + '</p>' +
+            '<div class="bg-gray-50 rounded-lg p-4"><p class="text-sm text-gray-700"><span class="font-semibold">Why it works:</span> ' + r.benefit.reasoning + '</p></div>' +
+          '</div>' +
+          '<div class="bg-white rounded-xl shadow-lg p-6 border-l-4 border-purple-500">' +
+            '<div class="flex items-center gap-2 mb-3"><svg class="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><span class="text-sm font-semibold text-purple-600 uppercase tracking-wide">Curiosity</span></div>' +
+            '<h2 class="text-2xl font-bold text-gray-900 mb-1">"' + r.curiosity.title + '"</h2>' +
+            (r.curiosity.subtitle ? '<p class="text-lg text-gray-600 italic mb-2">"' + r.curiosity.subtitle + '"</p>' : '<div class="mb-2"></div>') +
+            '<p class="text-base font-bold text-gray-800 mb-4">by ' + authorName + '</p>' +
+            '<div class="bg-gray-50 rounded-lg p-4"><p class="text-sm text-gray-700"><span class="font-semibold">Why it works:</span> ' + r.curiosity.reasoning + '</p></div>' +
+          '</div>' +
+          '<div class="bg-white rounded-xl shadow-lg p-6 border-l-4 border-orange-500">' +
+            '<div class="flex items-center gap-2 mb-3"><svg class="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg><span class="text-sm font-semibold text-orange-600 uppercase tracking-wide">Double Entendre</span></div>' +
+            '<h2 class="text-2xl font-bold text-gray-900 mb-1">"' + r.doubleEntendre.title + '"</h2>' +
+            (r.doubleEntendre.subtitle ? '<p class="text-lg text-gray-600 italic mb-2">"' + r.doubleEntendre.subtitle + '"</p>' : '<div class="mb-2"></div>') +
+            '<p class="text-base font-bold text-gray-800 mb-4">by ' + authorName + '</p>' +
+            '<div class="bg-gray-50 rounded-lg p-4"><p class="text-sm text-gray-700"><span class="font-semibold">Why it works:</span> ' + r.doubleEntendre.reasoning + '</p></div>' +
+          '</div>' +
+        '</div>' +
+        errorHtml +
+        '<div class="flex flex-col sm:flex-row gap-4 mb-8">' +
+          '<button id="btn-regenerate" class="flex-1 flex items-center justify-center gap-2 bg-white border-2 border-green-500 text-green-600 font-semibold py-3 px-6 rounded-lg hover:bg-green-50 transition-colors ' + regenClass + '"><svg class="w-5 h-5 ' + regenIcon + '" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg> ' + regenText + '</button>' +
+          '<button id="btn-download" class="flex-1 flex items-center justify-center gap-2 bg-brand text-white font-semibold py-3 px-6 rounded-lg hover:bg-green-600 transition-colors"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg> Download All Results</button>' +
+        '</div>' +
+        '<div class="bg-gray-100 rounded-lg p-4 mb-8">' +
+          '<label class="flex items-center gap-3 cursor-pointer">' +
+            '<input type="checkbox" id="nsfw-toggle" ' + (state.nsfwMode ? 'checked' : '') + ' class="w-5 h-5 rounded border-gray-300 text-orange-500 focus:ring-orange-500 cursor-pointer">' +
+            '<span class="text-sm text-gray-700"><span class="font-semibold">Remove PG-13 Filter</span> — Generate edgier Double Entendre options</span>' +
+          '</label>' +
+        '</div>' +
+        '<div class="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-300 rounded-xl p-8 mb-8">' +
+          '<div class="flex items-start gap-4">' +
+            '<div class="flex-shrink-0">' +
+              '<div class="w-12 h-12 bg-amber-400 rounded-full flex items-center justify-center">' +
+                '<svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>' +
+              '</div>' +
+            '</div>' +
+            '<div class="flex-1">' +
+              '<h3 class="text-2xl font-bold text-gray-900 mb-2">You Just Solved the Title.</h3>' +
+              '<p class="text-xl text-amber-700 font-semibold mb-6">Here\'s What\'s Still Missing.</p>' +
+              '<div class="space-y-5">' +
+                '<div class="bg-white rounded-lg p-5 shadow-sm">' +
+                  '<h4 class="text-lg font-bold text-gray-900 mb-3">1. Cover Design</h4>' +
+                  '<p class="text-base text-red-600 font-medium mb-2">❌ DIY covers scream "Amateur". Canva won\'t cut it.</p>' +
+                  '<p class="text-base text-green-700 font-medium">✅ We design covers by human designers that stop the scroll and match YOUR title\'s promise in 0.3 seconds.</p>' +
+                '</div>' +
+                '<div class="bg-white rounded-lg p-5 shadow-sm">' +
+                  '<h4 class="text-lg font-bold text-gray-900 mb-3">2. Distribution</h4>' +
+                  '<p class="text-base text-red-600 font-medium mb-2">❌ Most authors launch to crickets, then pray for Amazon\'s algorithm.</p>' +
+                  '<p class="text-base text-green-700 font-medium">✅ We use a distribution-first strategy—bulk deals, SPEAKING gigs, and channel partners lined up before chapter one.</p>' +
+                '</div>' +
+                '<div class="bg-white rounded-lg p-5 shadow-sm">' +
+                  '<h4 class="text-lg font-bold text-gray-900 mb-3">3. Marketing</h4>' +
+                  '<p class="text-base text-red-600 font-medium mb-2">❌ 90% of book sales happen in the first 30 days. Then it\'s over.</p>' +
+                  '<p class="text-base text-green-700 font-medium">✅ We build relationship engines that sell books for years—through your content, YOUR brand, and your sales process.</p>' +
+                '</div>' +
+                '<div class="bg-white rounded-lg p-5 shadow-sm">' +
+                  '<h4 class="text-lg font-bold text-gray-900 mb-3">4. Structure</h4>' +
+                  '<p class="text-base text-red-600 font-medium mb-2">❌ Most books are brain dumps that readers never finish.</p>' +
+                  '<p class="text-base text-green-700 font-medium">✅ We architect every chapter to build credibility and make YOU the obvious choice as a speaker, consultant, or service provider.</p>' +
+                '</div>' +
+                '<div class="bg-white rounded-lg p-5 shadow-sm">' +
+                  '<h4 class="text-lg font-bold text-gray-900 mb-3">5. Story</h4>' +
+                  '<p class="text-base text-red-600 font-medium mb-2">❌ Most non-fiction books sound like diaries only their mother would finish.</p>' +
+                  '<p class="text-base text-green-700 font-medium">✅ We design compelling story arcs and industry-centric narratives to establish YOU as the author<em>ity</em> in your niche.</p>' +
+                '</div>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="bg-gradient-to-r from-green-600 to-green-700 rounded-xl p-8 text-center text-white shadow-xl">' +
+          '<h3 class="text-2xl md:text-3xl font-bold mb-3">Which Large Organizations Would Buy Your Book in Bulk?</h3>' +
+          '<p class="text-lg text-green-100 mb-6">We\'ll introduce you to 3+ distribution partners who could generate $250K–$500K in additional revenue over the next 18 months. Click below now.</p>' +
+          '<a href="https://dougcrowe.link/call" target="_blank" class="inline-block bg-white text-green-700 font-bold text-lg py-4 px-10 rounded-lg hover:bg-gray-100 transition-colors shadow-lg">Schedule Your Call</a>' +
+        '</div>' +
+        '<p class="text-center text-gray-500 text-sm mt-8">Powered by Authority Fusion | <a href="https://authoryourbrand.com" target="_blank" class="text-brand hover:underline">AuthorYourBrand.com</a></p>' +
+      '</div></div>' + nsfwModal;
+    }
+
+    function render() {
+      var app = document.getElementById('app');
+      if (state.results) {
+        app.innerHTML = renderResultsView();
+      } else {
+        app.innerHTML = renderFormView();
+      }
+      attachEventListeners();
+      log('Rendered', { step: state.currentStep, hasResults: !!state.results, isLoading: state.isLoading });
+    }
+
+    function attachEventListeners() {
+      var btnBack = document.getElementById('btn-back');
+      var btnNext = document.getElementById('btn-next');
+      var btnGenerate = document.getElementById('btn-generate');
+
+      if (btnBack) {
+        btnBack.onclick = goBack;
+      }
+
+      if (btnNext) {
+        btnNext.onclick = goNext;
+      }
+
+      if (btnGenerate) {
+        btnGenerate.onclick = function() {
+          log('Generate button clicked');
+          generateTitles(false);
+        };
+      }
+
+      var fields = document.querySelectorAll('[data-field]');
+      for (var i = 0; i < fields.length; i++) {
+        (function(el) {
+          var fieldId = el.getAttribute('data-field');
+          el.oninput = function(e) {
+            updateField(fieldId, e.target.value);
+          };
+        })(fields[i]);
+      }
+
+      var radios = document.querySelectorAll('[data-radio]');
+      for (var j = 0; j < radios.length; j++) {
+        (function(el) {
+          el.onclick = function() {
+            var fieldId = el.getAttribute('data-radio');
+            var value = el.getAttribute('data-value');
+            updateField(fieldId, value);
+            render();
+          };
+        })(radios[j]);
+      }
+
+      var btnRegenerate = document.getElementById('btn-regenerate');
+      var btnDownload = document.getElementById('btn-download');
+      var nsfwToggle = document.getElementById('nsfw-toggle');
+      var btnKeepPg13 = document.getElementById('btn-keep-pg13');
+      var btnConfirmNsfw = document.getElementById('btn-confirm-nsfw');
+
+      if (btnRegenerate) {
+        btnRegenerate.onclick = function() {
+          log('Regenerate button clicked');
+          generateTitles(true);
+        };
+      }
+
+      if (btnDownload) {
+        btnDownload.onclick = downloadResults;
+      }
+
+      if (nsfwToggle) {
+        nsfwToggle.onchange = toggleNsfw;
+      }
+
+      if (btnKeepPg13) {
+        btnKeepPg13.onclick = hideNsfwWarning;
+      }
+
+      if (btnConfirmNsfw) {
+        btnConfirmNsfw.onclick = enableNsfw;
+      }
+    }
+
+    log('Initializing Title Generator');
+    render();
+  </script>
+</body>
+</html>
