@@ -66,15 +66,42 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'No text content in response' });
     }
 
-    // Parse JSON from response
+    // Parse JSON from response - with robust extraction
     let jsonStr = textContent.text.trim();
+    
+    // Remove markdown code blocks if present
     jsonStr = jsonStr.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '');
     
-    const parsed = JSON.parse(jsonStr);
+    // Try to find JSON object in the response
+    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      jsonStr = jsonMatch[0];
+    }
+    
+    // Clean up any control characters that might break JSON parsing
+    jsonStr = jsonStr.replace(/[\x00-\x1F\x7F]/g, (char) => {
+      if (char === '\n' || char === '\r' || char === '\t') {
+        return ' ';
+      }
+      return '';
+    });
+
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (parseError) {
+      console.error('JSON parse error:', parseError.message);
+      console.error('Raw response:', textContent.text);
+      console.error('Cleaned string:', jsonStr.substring(0, 500));
+      return res.status(500).json({ 
+        error: 'Failed to parse response. Please try again.',
+        debug: jsonStr.substring(0, 200)
+      });
+    }
 
     // Validate structure
     if (!parsed.benefit || !parsed.curiosity || !parsed.doubleEntendre) {
-      return res.status(500).json({ error: 'Invalid response structure' });
+      return res.status(500).json({ error: 'Invalid response structure. Please try again.' });
     }
 
     return res.status(200).json({ success: true, titles: parsed });
@@ -119,6 +146,6 @@ TITLE FORMAT OPTIONS:
 
 ${isRegenerate ? `CRITICAL: This is regeneration attempt #${generationCount}. You MUST generate COMPLETELY DIFFERENT titles than any previous attempts. Take a fresh creative angle, use different word choices, and explore new directions.` : ''}
 
-You must respond with ONLY valid JSON in this exact format (no markdown, no explanation, just JSON):
+IMPORTANT: Respond with ONLY the JSON object below. No other text, no markdown, no explanation. Just the raw JSON:
 {"benefit":{"title":"Title Here","subtitle":"Subtitle or empty string","reasoning":"2-3 sentences why this works"},"curiosity":{"title":"Title Here","subtitle":"Subtitle or empty string","reasoning":"2-3 sentences why this works"},"doubleEntendre":{"title":"Title Here","subtitle":"Subtitle or empty string","reasoning":"2-3 sentences why this works"}}`;
 }
