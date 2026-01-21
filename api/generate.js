@@ -44,7 +44,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: 'claude-3-haiku-20240307',
-        max_tokens: 1500,
+        max_tokens: 2000,
         messages: [{ role: 'user', content: prompt }]
       })
     });
@@ -67,35 +67,12 @@ export default async function handler(req, res) {
     }
 
     // Parse JSON from response - with robust extraction
-    let jsonStr = textContent.text.trim();
+    const parsed = extractJSON(textContent.text);
     
-    // Remove markdown code blocks if present
-    jsonStr = jsonStr.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '');
-    
-    // Try to find JSON object in the response
-    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      jsonStr = jsonMatch[0];
-    }
-    
-    // Clean up any control characters that might break JSON parsing
-    jsonStr = jsonStr.replace(/[\x00-\x1F\x7F]/g, (char) => {
-      if (char === '\n' || char === '\r' || char === '\t') {
-        return ' ';
-      }
-      return '';
-    });
-
-    let parsed;
-    try {
-      parsed = JSON.parse(jsonStr);
-    } catch (parseError) {
-      console.error('JSON parse error:', parseError.message);
-      console.error('Raw response:', textContent.text);
-      console.error('Cleaned string:', jsonStr.substring(0, 500));
+    if (!parsed) {
+      console.error('Failed to extract JSON from:', textContent.text.substring(0, 500));
       return res.status(500).json({ 
-        error: 'Failed to parse response. Please try again.',
-        debug: jsonStr.substring(0, 200)
+        error: 'Failed to parse response. Please try again.'
       });
     }
 
@@ -110,6 +87,105 @@ export default async function handler(req, res) {
     console.error('Handler error:', error);
     return res.status(500).json({ error: error.message });
   }
+}
+
+// Robust JSON extraction function
+function extractJSON(text) {
+  let jsonStr = text.trim();
+  
+  // Remove markdown code blocks if present
+  jsonStr = jsonStr.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '');
+  
+  // Try to find JSON object in the response
+  const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    jsonStr = jsonMatch[0];
+  }
+
+  // Attempt 1: Try parsing as-is
+  try {
+    return JSON.parse(jsonStr);
+  } catch (e) {
+    // Continue to cleanup attempts
+  }
+
+  // Attempt 2: Clean control characters and try again
+  let cleaned = jsonStr.replace(/[\x00-\x1F\x7F]/g, (char) => {
+    if (char === '\n' || char === '\r' || char === '\t') return ' ';
+    return '';
+  });
+  
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    // Continue to more aggressive cleanup
+  }
+
+  // Attempt 3: Fix common issues with unescaped quotes in values
+  // This regex-based approach handles nested quotes in reasoning fields
+  try {
+    // Replace problematic characters within string values
+    cleaned = cleaned
+      .replace(/:\s*"([^"]*?)"/g, (match, content) => {
+        // Escape any unescaped quotes within the content
+        const escaped = content.replace(/(?<!\\)"/g, '\\"');
+        return `: "${escaped}"`;
+      });
+    return JSON.parse(cleaned);
+  } catch (e) {
+    // Continue
+  }
+
+  // Attempt 4: Manual extraction of fields
+  try {
+    const result = {
+      benefit: extractTitleObject(cleaned, 'benefit'),
+      curiosity: extractTitleObject(cleaned, 'curiosity'),
+      doubleEntendre: extractTitleObject(cleaned, 'doubleEntendre')
+    };
+    
+    if (result.benefit && result.curiosity && result.doubleEntendre) {
+      return result;
+    }
+  } catch (e) {
+    // Continue
+  }
+
+  // Attempt 5: Very aggressive - extract just title/subtitle pairs
+  try {
+    const titlePattern = /"title"\s*:\s*"([^"]+)"/g;
+    const subtitlePattern = /"subtitle"\s*:\s*"([^"]*)"/g;
+    
+    const titles = [...cleaned.matchAll(titlePattern)].map(m => m[1]);
+    const subtitles = [...cleaned.matchAll(subtitlePattern)].map(m => m[1]);
+    
+    if (titles.length >= 3) {
+      return {
+        benefit: { title: titles[0], subtitle: subtitles[0] || '', reasoning: 'Generated title' },
+        curiosity: { title: titles[1], subtitle: subtitles[1] || '', reasoning: 'Generated title' },
+        doubleEntendre: { title: titles[2], subtitle: subtitles[2] || '', reasoning: 'Generated title' }
+      };
+    }
+  } catch (e) {
+    // Final failure
+  }
+
+  return null;
+}
+
+// Helper to extract a single title object
+function extractTitleObject(text, key) {
+  const pattern = new RegExp(`"${key}"\\s*:\\s*\\{([^}]+)\\}`, 'i');
+  const match = text.match(pattern);
+  
+  if (!match) return null;
+  
+  const block = match[1];
+  const title = block.match(/"title"\s*:\s*"([^"]+)"/)?.[1] || '';
+  const subtitle = block.match(/"subtitle"\s*:\s*"([^"]*)"/)?.[1] || '';
+  const reasoning = block.match(/"reasoning"\s*:\s*"([^"]+)"/)?.[1] || 'Generated title';
+  
+  return { title, subtitle, reasoning };
 }
 
 function buildPrompt(fd, nsfwMode, generationCount, isRegenerate) {
@@ -146,6 +222,11 @@ TITLE FORMAT OPTIONS:
 
 ${isRegenerate ? `CRITICAL: This is regeneration attempt #${generationCount}. You MUST generate COMPLETELY DIFFERENT titles than any previous attempts. Take a fresh creative angle, use different word choices, and explore new directions.` : ''}
 
-IMPORTANT: Respond with ONLY the JSON object below. No other text, no markdown, no explanation. Just the raw JSON:
-{"benefit":{"title":"Title Here","subtitle":"Subtitle or empty string","reasoning":"2-3 sentences why this works"},"curiosity":{"title":"Title Here","subtitle":"Subtitle or empty string","reasoning":"2-3 sentences why this works"},"doubleEntendre":{"title":"Title Here","subtitle":"Subtitle or empty string","reasoning":"2-3 sentences why this works"}}`;
+CRITICAL JSON RULES:
+- Do NOT use quotes inside your text values (use single quotes or rephrase instead)
+- Keep reasoning short (1 sentence max)
+- No special characters or line breaks in values
+
+Respond with ONLY this JSON structure, no other text:
+{"benefit":{"title":"Title Here","subtitle":"Subtitle or empty string","reasoning":"Brief reason"},"curiosity":{"title":"Title Here","subtitle":"Subtitle or empty string","reasoning":"Brief reason"},"doubleEntendre":{"title":"Title Here","subtitle":"Subtitle or empty string","reasoning":"Brief reason"}}`;
 }
